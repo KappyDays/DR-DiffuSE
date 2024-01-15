@@ -3,11 +3,12 @@ from rich.console import Console
 from utils import *
 from refiner_trainer import *
 
-
 def main(opt):
     if opt.seed > 0:
         random.seed(opt.seed)
         torch.manual_seed(opt.seed)
+    
+    # init_distributed_training(rank, opt)
 
     console = Console(color_system='256', style=None)
 
@@ -84,6 +85,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args.device = torch.device('cuda:0')
 
-    print(f'workspace:{os.getcwd()}, training device:{args.device}')
+    # args = add_args_parser(parser)
+    
+    print(f'workspace:{os.getcwd()}, training device:?')# {args.device}')
 
     main(args)
+    # torch.multiprocessing.spawn(main,
+    #         args=(args,),
+    #         nprocs=args.ngpus_per_node,
+    #         join=True)

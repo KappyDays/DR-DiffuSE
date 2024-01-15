@@ -2,6 +2,7 @@ from abc import abstractmethod
 
 import torch
 import wandb
+import soundfile as sf
 from torch.utils.data import DataLoader
 from dataset import *
 from metric import *
@@ -78,7 +79,7 @@ class VBDDPMTrainer(BasicTrainer):
         # load conditon generator
         if opt.c_gen:
             self.c_gen = Base()
-            checkpoint = torch.load("./asset/selected_model/c_gen.pth")
+            checkpoint = torch.load("./asset/base_model/Base_best.pth")
             self.c_gen.load_state_dict(checkpoint['model_state_dict'])
             self.c_gen.to(opt.device)
             self.c_gen.eval()  # newly add 11.20
@@ -363,9 +364,11 @@ class VBDDPMTrainer(BasicTrainer):
 
                 # # spec = self.data_reconstuct(spec)
                 # # condition = self.data_reconstuct(condition)
+                # for i, name in enumerate(batch['wav_name_list']):
+                #     sf.write(f'results/{name}', spec[0, i, :, :], 16000, format='WAV')
 
                 # f, axs = plt.subplots(2, 4, figsize=(16, 6))
-                #
+                
                 # axs[0, 0].imshow(temp[0, 0, :, :].cpu().numpy())
                 # axs[0, 0].set_title('n_real.png')
                 # axs[0, 0].axis('off')
@@ -378,7 +381,7 @@ class VBDDPMTrainer(BasicTrainer):
                 # axs[0, 3].imshow(condition[0, 1, :, :].cpu().numpy())
                 # axs[0, 3].set_title('c_imag.png')
                 # axs[0, 3].axis('off')
-                #
+                
                 # axs[1, 0].imshow(spec[0, 0, :, :].cpu().numpy())
                 # axs[1, 0].set_title('g_real.png')
                 # axs[1, 0].axis('off')

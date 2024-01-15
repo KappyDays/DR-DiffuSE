@@ -35,17 +35,17 @@ def main(opt):
     #     'valid',
     #     opt)
 
-    # cv_data = VBDataset(
-    #     './data/chime4/noisy',
-    #     './data/chime4/clean',
-    #     'valid',
-    #     opt)
-
     cv_data = VBDataset(
-        '/home/icdm/twx/speech/DR-DiffuSE/data/voicebank/noisy_testset_wav',
-        '/home/icdm/twx/speech/DR-DiffuSE/data/voicebank/clean_testset_wav',
+        './data/CHiME4_test_data/chime4_test_noisy',
+        None,
         'valid',
         opt)
+
+    # cv_data = VBDataset(
+    #     '/home/icdm/twx/speech/DR-DiffuSE/data/voicebank/noisy_testset_wav',
+    #     '/home/icdm/twx/speech/DR-DiffuSE/data/voicebank/clean_testset_wav',
+    #     'valid',
+    #     opt)
 
 
     console.print(f'evaluation: total {cv_data.__len__()} eval data.')

@@ -1,0 +1,1 @@
+[2024-01-10 11:27:27,293][train_ddpm.py][line:23][INFO] Namespace(batch_size=8, c_gen=True, chunk_length=48000, device=device(type='cuda', index=0), early_stop=5, fast_sampling=False, feat_type='sqrt', fft_num=320, half_lr=3, lr=0.0002, model='DiffuSE', n_epoch=50, num_workers=0, refine=False, seed=2023, wandb=False, weight_decay=1e-07, win_shift=160, win_size=320)

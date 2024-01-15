@@ -42,7 +42,7 @@ class CustomCollate(object):
     # }
 
     def collate_fn(self, batch):
-        noisy_list, clean_list, frame_num_list, wav_len_list = [], [], [], []
+        noisy_list, clean_list, frame_num_list, wav_len_list, wav_name_list = [], [], [], [], []
         to_tensor = ToTensor()
         for sample in batch:
             c = np.sqrt(len(sample['noisy_speech']) / np.sum(sample['noisy_speech'] ** 2.0))
@@ -50,6 +50,7 @@ class CustomCollate(object):
             clean_list.append(to_tensor(sample['clean_speech'] * c))
             frame_num_list.append(sample['frame_num'])
             wav_len_list.append(sample['wav_len'])
+            wav_name_list.append(sample['wav_name'])
         noisy_list = nn.utils.rnn.pad_sequence(noisy_list, batch_first=True)
         clean_list = nn.utils.rnn.pad_sequence(clean_list, batch_first=True)  # [b, chunk_length]
         noisy_list = torch.stft(
@@ -73,7 +74,8 @@ class CustomCollate(object):
             'feats': noisy_list,
             'labels': clean_list,
             'frame_num_list': frame_num_list,
-            'wav_len_list': wav_len_list
+            'wav_len_list': wav_len_list,
+            'wav_name_list': wav_name_list
         }
 
 
@@ -95,6 +97,7 @@ class VBDataset(Dataset):
         return len(self.raw_paths)
 
     def __getitem__(self, index):
+        wav_name = self.raw_paths[index]
         noisy, _ = librosa.load(os.path.join(self.noisy_root, self.raw_paths[index]), sr=16000)
         clean, _ = librosa.load(os.path.join(self.clean_root, self.raw_paths[index]), sr=16000)
         if self.data_type == 'train':
@@ -109,5 +112,6 @@ class VBDataset(Dataset):
             'noisy_speech': noisy,
             'clean_speech': clean,
             'frame_num': frame_num,
-            'wav_len': wav_len
+            'wav_len': wav_len,
+            'wav_name': wav_name
         }

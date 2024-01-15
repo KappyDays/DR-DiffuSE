@@ -6,6 +6,7 @@ from dataset import *
 from metric import *
 from loss import *
 from rich.progress import Progress
+import pdb
 
 import warnings
 
@@ -27,6 +28,7 @@ class BasicTrainer:
                                        pin_memory=True, collate_fn=collate.collate_fn, num_workers=opt.num_workers)
 
         # model
+        # pdb.set_trace()
         self.model = model.to(opt.device)
 
         # optimizer
@@ -156,10 +158,10 @@ class VBTrainer(BasicTrainer):
                     best_cv_loss = mean_valid_loss
 
                     self.save_cpt(epoch,
-                                  save_path=f'./asset/model/'
-                                            f'{self.model.__class__.__name__}_best.pth')
+                                  save_path=f'./results/{self.opt.save_path}'
+                                            f'{self.model.__class__.__name__}_best_{best_cv_loss}.pth')
                 self.save_cpt(epoch,
-                              save_path=f'./asset/model/'
+                              save_path=f'./results/{self.opt.save_path}'
                                         f'{self.model.__class__.__name__}_{epoch}.pth')
 
     @torch.no_grad()

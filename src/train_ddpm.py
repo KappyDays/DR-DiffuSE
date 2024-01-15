@@ -64,6 +64,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--model', type=str, default="DiffuSE", help='Base/DiffuSEC/DiffuSE/...')
     parser.add_argument('--c_gen', action='store_true', help='choose to use condition generated from condition generator')
+    parser.add_argument('--refine', action='store_true', help='choose to use condition generated from condition generator')
     parser.add_argument('--lr', type=float, default=2e-4, help='learning rate')
     parser.add_argument('--n_epoch', type=int, default=50, help='number of epoch')
     parser.add_argument('--batch_size', type=int, default=8)
