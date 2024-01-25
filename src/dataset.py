@@ -42,10 +42,11 @@ class CustomCollate(object):
     # }
 
     def collate_fn(self, batch):
-        noisy_list, clean_list, frame_num_list, wav_len_list, wav_name_list = [], [], [], [], []
+        noisy_list, clean_list, frame_num_list, wav_len_list, wav_name_list, scaling_list = [], [], [], [], [], []
         to_tensor = ToTensor()
         for sample in batch:
             c = np.sqrt(len(sample['noisy_speech']) / np.sum(sample['noisy_speech'] ** 2.0))
+            scaling_list.append(c)
             noisy_list.append(to_tensor(sample['noisy_speech'] * c))
             clean_list.append(to_tensor(sample['clean_speech'] * c))
             frame_num_list.append(sample['frame_num'])
@@ -75,7 +76,8 @@ class CustomCollate(object):
             'labels': clean_list,
             'frame_num_list': frame_num_list,
             'wav_len_list': wav_len_list,
-            'wav_name_list': wav_name_list
+            'wav_name_list': wav_name_list,
+            'scaling_list': scaling_list
         }
 
 

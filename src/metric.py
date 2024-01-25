@@ -7,8 +7,9 @@ import librosa
 from pystoi.stoi import stoi  # https://github.com/mpariente/pystoi
 import numpy as np
 import torch
-import sys
+import sys, os
 
+import soundfile as sf
 
 #################################################
 #
@@ -526,7 +527,8 @@ def compareone_load_wav(args):
     return csig, cbak, covl, pesq, ssnr, stoi
 
 
-def compare_complex(esti_list, label_list, frame_list, feat_type='sqrt'):
+def compare_complex(esti_list, label_list, frame_list, feat_type='sqrt', 
+                    is_save_wav=False, result_path=None, wav_name_list=None, scaling_list=None):
     all_csig_list, all_cbak_list, all_covl_list, all_pesq_list, all_ssnr_list, all_stoi_list = [], [], [], [], [], []
     with torch.no_grad():
         esti_mag, esti_phase = torch.norm(esti_list, dim=1), torch.atan2(esti_list[:, -1, :, :], esti_list[:, 0, :, :])
@@ -567,6 +569,10 @@ def compare_complex(esti_list, label_list, frame_list, feat_type='sqrt'):
             t_esti, t_label = t_esti[:t_len], t_label[:t_len]
             esti_utts.append(t_esti)
             clean_utts.append(t_label)
+            
+            ''' save estimated wav result'''
+            if is_save_wav:
+                sf.write(result_path + f'/{wav_name_list[i]}', t_esti / scaling_list[i], 16000, format='WAV')
 
         for c, p in zip(clean_utts, esti_utts):
             # print("clean_utts: ", c)
@@ -577,6 +583,7 @@ def compare_complex(esti_list, label_list, frame_list, feat_type='sqrt'):
             all_pesq_list.append(batch_result[3])
             all_ssnr_list.append(batch_result[4])
             all_stoi_list.append(batch_result[5])
+            
     return np.mean(all_csig_list), np.mean(all_cbak_list), np.mean(all_covl_list), np.mean(all_pesq_list), np.mean(
         all_ssnr_list), np.mean(all_stoi_list)
 

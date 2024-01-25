@@ -3,7 +3,7 @@ import torch.nn as nn
 import os
 import numpy as np
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 
 class Base(nn.Module):

@@ -19,14 +19,14 @@ def main(opt):
 
     '''load data'''
     tr_data = VBDataset(
-        './data/voicebank/noisy_trainset_wav',
-        './data/voicebank/clean_trainset_wav',
+        f'./data/{opt.data_dir}/noisy_trainset_wav',
+        f'./data/{opt.data_dir}/clean_trainset_wav',
         'train',
         opt)
 
     cv_data = VBDataset(
-        './data/voicebank/noisy_testset_wav',
-        './data/voicebank/clean_testset_wav',
+        f'./data/{opt.data_dir}/noisy_testset_wav',
+        f'./data/{opt.data_dir}/clean_testset_wav',
         'valid',
         opt)
 
@@ -36,7 +36,8 @@ def main(opt):
     #     'valid',
     #     opt)
 
-    console.print(f'evaluation: total {cv_data.__len__()} eval data.')
+    console.print(f'total {tr_data.__len__()} train data, total {cv_data.__len__()} eval data.')
+    # console.print(f'evaluation: total {cv_data.__len__()} eval data.')
 
     '''load model'''
     opt.params = AttrDict(
@@ -49,7 +50,8 @@ def main(opt):
     '''load trainer'''
     trainer = RefinerTrainer(tr_data, cv_data, console, opt)
     if opt.inference:
-        checkpoint = torch.load(f"./asset/selected_model/refiner.pth")
+        # checkpoint = torch.load(f"./asset/selected_model/refiner.pth")
+        checkpoint = torch.load(f"./asset/model/refiner_Base_1.pth")
         trainer.refiner.load_state_dict(checkpoint['model_state_dict'])
         trainer.refiner.to(opt.device)
         trainer.inference()
@@ -81,6 +83,8 @@ if __name__ == '__main__':
     parser.add_argument('--fast_sampling', action='store_true', help='')
     parser.add_argument('--inference', action='store_true', help='')
     parser.add_argument('--from_base', action='store_true', help='')
+
+    parser.add_argument('--data_dir', type=str, default='voicebank')
 
     args = parser.parse_args()
     args.device = torch.device('cuda:0')

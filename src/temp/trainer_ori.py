@@ -6,6 +6,8 @@ from dataset import *
 from metric import *
 from loss import *
 from rich.progress import Progress
+from utils import *
+from basic_trainer import *
 import pdb
 
 import warnings
@@ -16,19 +18,18 @@ warnings.filterwarnings('ignore')
 class BasicTrainer:
     def __init__(self, train_data, valid_data, model, logger, opt):
         # dataset
-        self.train_data = train_data,
-        self.valid_data = valid_data
+        # self.train_data = train_data,
+        # self.valid_data = valid_data
+
+        # save model name for save pth
+        self.model_name = model.__class__.__name__
 
         collate = CustomCollate(opt)
 
-        # data
         self.train_loader = DataLoader(train_data, batch_size=opt.batch_size, shuffle=True, drop_last=True,
-                                       pin_memory=True, collate_fn=collate.collate_fn, num_workers=opt.num_workers)
-        self.valid_loader = DataLoader(valid_data, batch_size=opt.batch_size, shuffle=False, drop_last=True,
-                                       pin_memory=True, collate_fn=collate.collate_fn, num_workers=opt.num_workers)
-
-        # model
-        # pdb.set_trace()
+                                        pin_memory=True, collate_fn=collate.collate_fn, num_workers=opt.num_workers)
+        self.valid_loader = DataLoader(valid_data, batch_size=opt.batch_size//2, shuffle=False, drop_last=True,
+                                        pin_memory=True, collate_fn=collate.collate_fn, num_workers=opt.num_workers)
         self.model = model.to(opt.device)
 
         # optimizer
@@ -60,7 +61,6 @@ class BasicTrainer:
             },
             save_path
         )
-
 
 class VBTrainer(BasicTrainer):
     def __init__(self, train_data, valid_data, model, logger, opt):
@@ -107,7 +107,7 @@ class VBTrainer(BasicTrainer):
         harving = False
 
         with Progress() as self.progress:
-            for epoch in range(self.opt.n_epoch):
+            for epoch in range(self.opt.step+1, self.opt.n_epoch):
                 batch_train = self.progress.add_task(f"[green]training epoch_{epoch}...", total=len(self.train_loader))
                 self.model.train()
                 for batch in self.train_loader:
@@ -150,19 +150,26 @@ class VBTrainer(BasicTrainer):
                     self.optim.load_state_dict(optim_state)
                     self.logger.print('Learning rate adjusted to %5f' % (optim_state['param_groups'][0]['lr']))
                     harving = False
-                prev_cv_loss = mean_valid_loss
 
                 if mean_valid_loss < best_cv_loss:
                     self.logger.print(
                         f"best loss is: {best_cv_loss}, current loss is: {mean_valid_loss}, save best_checkpoint.pth")
+                    # remove_file = f'./{self.opt.save_path}/'f'{self.model_name}_best_{epoch}_{round(prev_cv_loss, 4)}.pth'
+                    # if os.path.isfile(remove_file):
+                    #     os.remove(remove_file)
                     best_cv_loss = mean_valid_loss
 
+                    '''save best checkpoint'''
                     self.save_cpt(epoch,
-                                  save_path=f'./results/{self.opt.save_path}'
-                                            f'{self.model.__class__.__name__}_best_{best_cv_loss}.pth')
+                                save_path=f'./{self.opt.save_path}/'
+                                            f'{self.model_name}_best_{epoch}_{round(best_cv_loss, 4)}.pth')
                 self.save_cpt(epoch,
-                              save_path=f'./results/{self.opt.save_path}'
-                                        f'{self.model.__class__.__name__}_{epoch}.pth')
+                            save_path=f'./{self.opt.save_path}/'
+                                        f'{self.model_name}_{epoch}.pth')
+                wandb.save(f'./{self.opt.save_path}/'
+                           f'{self.model_name}_best_{epoch}_{round(best_cv_loss, 4)}.pth')
+                
+                prev_cv_loss = mean_valid_loss
 
     @torch.no_grad()
     def inference(self):
@@ -187,8 +194,13 @@ class VBTrainer(BasicTrainer):
                     continue
             out = self.run_step(batch)  # out['compressed_feats']
             batch_result = compare_complex(out['model_out']['est_comp'], out['compressed_label'],
-                                           batch['frame_num_list'],
-                                           feat_type=self.opt.feat_type)
+                                        batch['frame_num_list'],
+                                        feat_type=self.opt.feat_type,
+                                        is_save_wav=self.opt.save_wav and self.opt.inference,
+                                        result_path=f'./{self.opt.save_path}/wav',
+                                        wav_name_list=batch['wav_name_list'],
+                                        scaling_list=batch['scaling_list'])                                            
+   
             loss_list.append(out['loss'].item())
             csig_list.append(batch_result[0])
             cbak_list.append(batch_result[1])
@@ -196,8 +208,17 @@ class VBTrainer(BasicTrainer):
             pesq_list.append(batch_result[3])
             ssnr_list.append(batch_result[4])
             stoi_list.append(batch_result[5])
-
+            
             self.progress.advance(batch_valid, advance=1)
+        
+        # if torch.distributed.is_initialized():
+        #     test_loss = self.ddp_inference(loss_list)
+        #     test_mean_csig = self.ddp_inference(csig_list)
+        #     test_mean_cbak = self.ddp_inference(cbak_list)
+        #     test_mean_covl = self.ddp_inference(covl_list)
+        #     test_mean_pesq = self.ddp_inference(pesq_list)
+        #     test_mean_ssnr = self.ddp_inference(ssnr_list)
+        #     test_mean_stoi = self.ddp_inference(stoi_list)
 
         if self.opt.wandb:
             wandb.log(
@@ -208,18 +229,19 @@ class VBTrainer(BasicTrainer):
                     'test_mean_covl': np.mean(covl_list),
                     'test_mean_pesq': np.mean(pesq_list),
                     'test_mean_ssnr': np.mean(ssnr_list),
-                    'test_mean_stoi': np.mean(stoi_list),
+                    'test_mean_stoi': np.mean(stoi_list)
                 }
             )
         else:
+            # if self.opt.rank == 0:
             print({
-                'test_loss': np.mean(loss_list),
-                'test_mean_csig': np.mean(csig_list),
-                'test_mean_cbak': np.mean(cbak_list),
-                'test_mean_covl': np.mean(covl_list),
-                'test_mean_pesq': np.mean(pesq_list),
-                'test_mean_ssnr': np.mean(ssnr_list),
-                'test_mean_stoi': np.mean(stoi_list),
+                    'test_loss': np.mean(loss_list),
+                    'test_mean_csig': np.mean(csig_list),
+                    'test_mean_cbak': np.mean(cbak_list),
+                    'test_mean_covl': np.mean(covl_list),
+                    'test_mean_pesq': np.mean(pesq_list),
+                    'test_mean_ssnr': np.mean(ssnr_list),
+                    'test_mean_stoi': np.mean(stoi_list)
             })
 
         return np.mean(loss_list)

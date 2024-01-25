@@ -4,7 +4,6 @@ import numpy as np
 from .single_trans import TransformerEncoderLayer
 import os
 
-#os.environ['CUDA_VISIBLE_DEVICES'] = '0, 1'
 
 class Dual_Transformer(nn.Module):
     """
@@ -47,10 +46,15 @@ class Dual_Transformer(nn.Module):
                                     nn.Conv2d(input_size//2, output_size, 1)
                                     )
 
-    def forward(self, input):
+    def forward(self, input, frame_num_list=None):
         #  input --- [b,  c,  num_frames, frame_size]  --- [b, c, dim2, dim1]
         b, c, dim2, dim1 = input.shape
         output = self.input(input)
+        
+        ''' get col attn mask '''
+        col_attn_mask = None
+        # if sum(frame_num_list) < (b * dim2): # num_frame attn mask
+        #     col_attn_mask = self.get_col_attn_mask(output, frame_num_list)
         for i in range(len(self.row_trans)):
             row_input = output.permute(3, 0, 2, 1).contiguous().view(dim1, b*dim2, -1)  # [dim1, b*dim2, c]
             row_output = self.row_trans[i](row_input)  # [dim1, b*dim2, c]
@@ -68,7 +72,18 @@ class Dual_Transformer(nn.Module):
         output = self.output(output)  # [b, c, dim2, dim1]
 
         return output
-
+    
+    
+    def get_col_attn_mask(self, input, frame_num_list):
+        batch_size, _, dim2, dim1 = input.shape
+        col_attn_mask = torch.zeros((batch_size*dim1*4, dim2, dim2), dtype=torch.bool, device=input.device)
+        
+        for idx, frame in enumerate(frame_num_list):
+            if frame < dim2:
+                col_attn_mask[idx*dim1*4:(idx+1)*dim1*4][frame:] = True
+        
+        return col_attn_mask
+        
 '''
 
 trans = Dual_Transformer(64, 64, num_layers=4)

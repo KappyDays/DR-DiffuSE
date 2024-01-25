@@ -29,19 +29,6 @@ class BasicTrainer:
         self.valid_loader = DataLoader(valid_data, batch_size=opt.batch_size, shuffle=False, drop_last=True,
                                        pin_memory=True, collate_fn=collate.collate_fn, num_workers=opt.num_workers)
 
-        # c_gen
-        self.c_gen = Base()
-        checkpoint = torch.load("./asset/selected_model/c_gen.pth")
-        self.c_gen.load_state_dict(checkpoint['model_state_dict'])
-        self.c_gen.to(opt.device)
-        self.c_gen.eval()
-
-        # ddpm
-        self.ddpm_model = DiffuSE(opt.params)
-        checkpoint = torch.load(f"./asset/selected_model/ddpm.pth")
-        self.ddpm_model.load_state_dict(checkpoint['model_state_dict'])
-        self.ddpm_model.to(opt.device)
-        self.ddpm_model.eval()
 
         # refiner
         self.refiner = Base().to(opt.device)

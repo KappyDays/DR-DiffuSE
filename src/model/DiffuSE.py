@@ -4,7 +4,7 @@ import os
 import numpy as np
 from model import Base
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 
 class DiffuSE(nn.Module):

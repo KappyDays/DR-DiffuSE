@@ -2,16 +2,24 @@ import torch
 import torch.nn as nn
 import os
 import numpy as np
-from TSTNN import Dual_Transformer
+from .TSTNN import Dual_Transformer
+import pdb
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 class BaseTNN(nn.Module):
     def __init__(self):
         super(BaseTNN, self).__init__()
-
-        self.tnn = Dual_Transformer(32, 32, num_layers=4)
-
+        
+        # TNN
+        self.tnn_ch = 32
+        self.DTNN = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=self.tnn_ch, kernel_size=(1, 1), stride=(1, 1)),
+            Dual_Transformer(self.tnn_ch, self.tnn_ch, num_layers=4),
+            nn.BatchNorm2d(self.tnn_ch),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=self.tnn_ch, out_channels=2, kernel_size=(1, 1), stride=(1, 1)))
+        
+        # Base
         self.en = Encoder()
         self.de_real = Decoder()
         self.de_imag = Decoder()
@@ -20,7 +28,16 @@ class BaseTNN(nn.Module):
                                   TCM())
 
     def forward(self, x):
-        x = self.tnn(x) # [b,c,t,f], c=32
+        tnn_input = x
+        output = self.DTNN(tnn_input) # [b,c,t,f], c=self.tnn_ch = (32)
+        x = output + x
+        
+        # x = self.DTNN(x) # [b,c,t,f], c=self.tnn_ch = (32)
+        
+        # x = self.tnn_conv1(x)
+        # x = self.tnn(x, frame_num_list) 
+        # x = self.tnn_conv2(x)
+        
         x, en_list = self.en(x)  # [b,c,t,f], c=64, f=4
         x = x.permute(0, 2, 1, 3)  # [b,t,c,f]
         x = x.reshape(x.size()[0], x.size()[1], -1).permute(0, 2, 1)  # [b,c*f,t]

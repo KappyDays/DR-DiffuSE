@@ -1,12 +1,14 @@
 import logging
-
+import soundfile as sf
+from metric import compareone
+import numpy as np
 import argparse
 
 import torch
 
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-
+from torch.utils.data import BatchSampler
 from torch.nn.parallel import DistributedDataParallel
 
 def get_logger(filename, verbosity=1, name=None):
@@ -46,21 +48,29 @@ class AttrDict(dict):
         return self
     
 
-def add_args_parser(parser):
-    # parser = argparse.ArgumentParser(add_help=False)
-    # parser.add_argument('--epoch', type=int, default=3)
-    # parser.add_argument('--batch_size', type=int, default=8)
-    parser.add_argument('--port', type=int, default=2033)
-    # parser.add_argument('--root', type=str, default='./cifar')
-    parser.add_argument('--local_rank', type=int)
-    opts = parser.parse_args()
+def add_custom_args(parser):
+    parser.add_argument('--data_dir', type=str, default="voicebank", help='choose data directory')
+    parser.add_argument('--save_path', type=str, default="results/default_save", help='save path')
+    parser.add_argument('--save_wav', action='store_true', help='save wav result')
+    parser.add_argument('--inference', action='store_true', help='set inference mode')
+    parser.add_argument('--gpus', type=int, nargs="+", help='set gpus')
+    parser.add_argument('--resume_from_ckpt', type=str, help='resume training')
+    parser.add_argument('--wandb_resume', action='store_true', help='resume training with wandb')
     
-    opts.ngpus_per_node = torch.cuda.device_count()
-    opts.gpu_ids = list(range(opts.ngpus_per_node))
-    opts.num_workers = opts.ngpus_per_node * 4
-    
-    return opts
+    parser.add_argument('--wpn', type=str, help='wandb project name')
+    parser.add_argument('--wrn', type=str, help='wandb run name')
+    return parser
 
+def unpack_DP_model(state_dict):
+    ''' unpack DataParallel model state_dict to single GPU model state_dict'''
+    unpacked_state_dict = {}
+    for key in state_dict:
+        if key[:7] == 'module.':
+            unpacked_state_dict[key[7:]] = state_dict[key]#.to(opt.device)
+        else:
+            unpacked_state_dict[key] = state_dict[key]#.to(opt.device)
+    return unpacked_state_dict
+            
 def init_distributed_training(rank, opts):
     # 1. setting for distributed training
     opts.rank = rank
@@ -81,8 +91,8 @@ def init_distributed_training(rank, opts):
     torch.distributed.barrier()
 
     # convert print fn iif rank is zero
-    setup_for_distributed(opts.rank == 0)
-    print('opts :',opts)
+    # setup_for_distributed(opts.rank == 0)
+    # print('opts :',opts)
 
 
 def setup_for_distributed(is_master):
@@ -97,4 +107,28 @@ def setup_for_distributed(is_master):
         if is_master or force:
             builtin_print(*args, **kwargs)
 
-    __builtin__.print = print    
+    __builtin__.print = print
+    
+def is_dist_avail_and_initialized():
+    if not torch.distributed.is_available():
+        return False
+    if not torch.distributed.is_initialized():
+        return False
+    return True
+
+def get_world_size():
+    if not is_dist_avail_and_initialized():
+        return 1
+    return torch.distributed.get_world_size()
+
+def get_rank():
+    if not is_dist_avail_and_initialized():
+        return 0
+    return torch.distributed.get_rank()
+
+def is_main_process():
+    return get_rank() == 0
+
+# def save_on_master(*args, **kwargs):
+#     if is_main_process():
+#         torch.save(*args, **kwargs)

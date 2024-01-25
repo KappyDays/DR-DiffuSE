@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${file}",
             // "args": "--model DiffuSE --fast_sampling --c_gen --c_guidance --refine",
-            "args": "--model Base",
+            "args": "--model BaseTNN --batch_size 2 --data_dir voicebank_test_20 --save_wav --inference --resume_from_ckpt ./results/Base/BaseTNN/Base_residual/BaseTNN_best_25_0.0756.pth",
             // "args": "--model Base --wandb",
             // "args": "--model Base",
             "console": "integratedTerminal",
