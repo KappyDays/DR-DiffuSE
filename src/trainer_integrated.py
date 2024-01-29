@@ -10,6 +10,8 @@ from utils import *
 from model import *
 from tqdm import tqdm
 
+from parallel import DataParallelModel, DataParallelCriterion
+
 import pdb
 import warnings
 
@@ -19,17 +21,20 @@ class BasicTrainer:
     def __init__(self, train_data, valid_data, model, logger, opt):
         # save model name for save pth
         self.model_name = model.__class__.__name__
-
+        valid_batch_size = 4
+                
         collate = CustomCollate(opt)
 
         self.train_loader = DataLoader(train_data, batch_size=opt.batch_size, shuffle=True, drop_last=True,
                                         pin_memory=True, collate_fn=collate.collate_fn, num_workers=opt.num_workers)
-        self.valid_loader = DataLoader(valid_data, batch_size=opt.batch_size//2, shuffle=False, drop_last=True,
+        self.valid_loader = DataLoader(valid_data, batch_size=valid_batch_size, shuffle=False, drop_last=True,
                                         pin_memory=True, collate_fn=collate.collate_fn, num_workers=opt.num_workers)
         self.model = model.to(opt.device)
 
         # optimizer
         self.optim = torch.optim.Adam(self.model.parameters(), lr=opt.lr, weight_decay=opt.weight_decay)
+
+        # self.DP_class = nn.DataParallel if opt.inference else DataParallelModel
 
         # others
         self.opt = opt
@@ -134,17 +139,13 @@ class BasicTrainer:
                     self.optim.step()
                     self.progress.advance(batch_train, advance=1)
                     if self.opt.wandb:
-                        wandb.log(
-                            {
-                                'train_loss': out['loss'].item()
-                            }
-                        )
+                        wandb.log({'train_loss': out['loss'].item()})
 
                 mean_valid_loss = self.inference()
 
                 '''Adjust the learning rate and early stop'''
                 if self.opt.half_lr > 1:
-                    if mean_valid_loss >= prev_cv_loss:
+                    if mean_valid_loss >= best_cv_loss: # change [prev_cv_loss => best_cv_loss]
                         cv_no_impv += 1
                         if cv_no_impv == self.opt.half_lr:
                             harving = True
@@ -161,7 +162,7 @@ class BasicTrainer:
                     self.optim.load_state_dict(optim_state)
                     self.logger.print('Learning rate adjusted to %5f' % (optim_state['param_groups'][0]['lr']))
                     harving = False
-                prev_cv_loss = mean_valid_loss
+                # prev_cv_loss = mean_valid_loss
 
                 if mean_valid_loss < best_cv_loss:
                     self.logger.print(
@@ -175,8 +176,9 @@ class BasicTrainer:
                 self.save_cpt(epoch,
                             save_path=f'./{self.opt.save_path}/'
                                         f'{self.model_name}_{epoch}.pth')
-                wandb.save(f'./{self.opt.save_path}/'
-                           f'{self.model_name}_best_{epoch}_{round(best_cv_loss, 4)}.pth')
+                if self.opt.wandb:
+                    wandb.save(f'./{self.opt.save_path}/'
+                            f'{self.model_name}_best_{epoch}_{round(best_cv_loss, 4)}.pth')
 
     @torch.no_grad()
     def inference(self):
@@ -219,6 +221,26 @@ class BasicTrainer:
             
             self.progress.advance(batch_valid, advance=1)
 
+        self.print_save_logs(loss_list, csig_list, cbak_list, covl_list, pesq_list, ssnr_list, stoi_list)
+
+        return np.mean(loss_list)    
+    
+    def save_cpt(self, step, save_path):
+        """
+        save checkpoint, for inference/re-training
+        :return:
+        """
+        torch.save(
+            {
+                'step': step,
+                'model_state_dict': self.model.state_dict(),
+                'optimizer_state_dict': self.optim.state_dict()
+            },
+            save_path
+        )
+        
+    def print_save_logs(self, *lists):
+        loss_list, csig_list, cbak_list, covl_list, pesq_list, ssnr_list, stoi_list = lists
         if self.opt.wandb:
             wandb.log(
                 {
@@ -241,31 +263,58 @@ class BasicTrainer:
                     'test_mean_ssnr': np.mean(ssnr_list),
                     'test_mean_stoi': np.mean(stoi_list)
             })
-
-        return np.mean(loss_list)    
+            if self.opt.inference: # save result for inference
+                with open(f'./{self.opt.save_path}/inference_result.txt', 'w') as fp:
+                    fp.write(f'{self.model_name}: {self.opt.resume_from_ckpt}\n\
+                            test_mean_stoi: {round(np.mean(stoi_list), 4)}\n\
+                            test_mean_pesq: {round(np.mean(pesq_list), 4)}\n\
+                            test_mean_csig: {round(np.mean(csig_list), 4)}\n\
+                            test_mean_cbak: {round(np.mean(cbak_list), 4)}\n\
+                            test_mean_covl: {round(np.mean(covl_list), 4)}\n\
+                            test_mean_ssnr: {round(np.mean(ssnr_list), 4)}\n\
+                            test_loss:      {round(np.mean(loss_list), 4)}')        
     
-    def save_cpt(self, step, save_path):
-        """
-        save checkpoint, for inference/re-training
-        :return:
-        """
-        torch.save(
-            {
-                'step': step,
-                'model_state_dict': self.model.state_dict(),
-                'optimizer_state_dict': self.optim.state_dict()
-            },
-            save_path
-        )
-
+    def drow_result(self, temp, condition, spec, batch_label):
+        pass
+        # f, axs = plt.subplots(2, 4, figsize=(16, 6))
+        
+        # axs[0, 0].imshow(temp[0, 0, :, :].cpu().numpy())
+        # axs[0, 0].set_title('n_real.png')
+        # axs[0, 0].axis('off')
+        # axs[0, 1].imshow(temp[0, 1, :, :].cpu().numpy())
+        # axs[0, 1].set_title('n_imag.png')
+        # axs[0, 1].axis('off')
+        # axs[0, 2].imshow(condition[0, 0, :, :].cpu().numpy())
+        # axs[0, 2].set_title('c_real.png')
+        # axs[0, 2].axis('off')
+        # axs[0, 3].imshow(condition[0, 1, :, :].cpu().numpy())
+        # axs[0, 3].set_title('c_imag.png')
+        # axs[0, 3].axis('off')
+        
+        # axs[1, 0].imshow(spec[0, 0, :, :].cpu().numpy())
+        # axs[1, 0].set_title('g_real.png')
+        # axs[1, 0].axis('off')
+        # axs[1, 1].imshow(spec[0, 1, :, :].cpu().numpy())
+        # axs[1, 1].set_title('g_imag.png')
+        # axs[1, 1].axis('off')
+        # axs[1, 2].imshow(batch_label[0, 0, :, :].cpu().numpy())
+        # axs[1, 2].set_title('l_real.png')
+        # axs[1, 2].axis('off')
+        # axs[1, 3].imshow(batch_label[0, 1, :, :].cpu().numpy())
+        # axs[1, 3].set_title('l_imag.png')
+        # axs[1, 3].axis('off')
+        # plt.savefig(f'asset/data/sample_{self.model_ddpm.__class__.__name__}.jpg', dpi=300, bbox_inches='tight')
+        # exit()
+            
 class VBTrainer(BasicTrainer):
     def __init__(self, train_data, valid_data, model, logger, opt):
         super(VBTrainer, self).__init__(train_data, valid_data, model, logger, opt)
-        
     def run_step(self, x):
         batch_feat, batch_label = self.data_compress(x)
         out = self.model(batch_feat)
+        
         loss = com_mag_mse_loss(out['est_comp'], batch_label, x['frame_num_list'])
+            
         return {
             'model_out': out,
             'loss': loss,
@@ -284,21 +333,27 @@ class VBDDPMTrainer(BasicTrainer):
         
         # load conditon generator
         if opt.c_model: ### check no DP training
-            self.c_gen = eval(opt.c_model)() #Base()
-            self.c_gen = nn.DataParallel(self.c_gen, device_ids=opt.gpus)
+            self.c_gen = eval(opt.c_model)() # Base or BaseTNN
+            
             checkpoint = torch.load(opt.checkpoints['c_gen'])#"./asset/base_model/Base_best.pth")
+            checkpoint['model_state_dict'] = unpack_DP_model(checkpoint['model_state_dict'])
             self.c_gen.load_state_dict(checkpoint['model_state_dict'])
+            
+            self.c_gen = nn.DataParallel(self.c_gen, device_ids=opt.gpus)
             self.c_gen.to(opt.device)
             self.c_gen.eval()  # newly add 11.20
 
         if opt.r_model:
-            self.refiner = eval(opt.r_model)() #Base()
-            self.refiner = nn.DataParallel(self.refiner, device_ids=opt.gpus)
+            self.refiner = eval(opt.r_model)() # Base or BaseTNN
+            
             checkpoint = torch.load(opt.checkpoints['refiner'])#"./asset/selected_model/refiner.pth")
+            checkpoint['model_state_dict'] = unpack_DP_model(checkpoint['model_state_dict'])
             self.refiner.load_state_dict(checkpoint['model_state_dict'])
+            
+            self.refiner = nn.DataParallel(self.refiner, device_ids=opt.gpus)
             self.refiner.to(opt.device)
-            self.refiner.eval() 
-
+            self.refiner.eval()
+        
     def run_step(self, x):
         batch_feat, batch_label = self.data_compress(x)
 
@@ -316,7 +371,9 @@ class VBDDPMTrainer(BasicTrainer):
             condition = batch_feat
 
         out = self.model(noisy_audio, condition, t)
+        
         loss = com_mse_loss(out['est_noise'], noise, x['frame_num_list'])
+            
         return {
             'model_out': out,
             'loss': loss,
@@ -329,7 +386,7 @@ class VBDDPMTrainer(BasicTrainer):
     def inference_(self):
         loss_list, csig_list, cbak_list, covl_list, pesq_list, ssnr_list, stoi_list = [], [], [], [], [], [], []
         alpha, beta, alpha_cum, sigmas, T = self.inference_schedule(fast_sampling=self.params.fast_sampling)
-        # with Progress() as self.progress:
+        
         batch_valid_ddpm = self.progress.add_task(f"[green]validating...", total=len(self.valid_loader))
         for batch in self.valid_loader:
             # cuda
@@ -397,47 +454,18 @@ class VBDDPMTrainer(BasicTrainer):
                 spec = self.refiner(spec)['est_comp']
 
             '''run code in below can draw the difference between initial gaussian, condition (noisy), generated, and ground truth'''
-
-            # # spec = self.data_reconstuct(spec)
-            # # condition = self.data_reconstuct(condition)
-            # for i, name in enumerate(batch['wav_name_list']):
-            #     sf.write(f'results/{name}', spec[0, i, :, :], 16000, format='WAV')
-
-            # f, axs = plt.subplots(2, 4, figsize=(16, 6))
+            if self.opt.drow_result:
+                self.drow_result(temp, condition, spec, batch_label)
             
-            # axs[0, 0].imshow(temp[0, 0, :, :].cpu().numpy())
-            # axs[0, 0].set_title('n_real.png')
-            # axs[0, 0].axis('off')
-            # axs[0, 1].imshow(temp[0, 1, :, :].cpu().numpy())
-            # axs[0, 1].set_title('n_imag.png')
-            # axs[0, 1].axis('off')
-            # axs[0, 2].imshow(condition[0, 0, :, :].cpu().numpy())
-            # axs[0, 2].set_title('c_real.png')
-            # axs[0, 2].axis('off')
-            # axs[0, 3].imshow(condition[0, 1, :, :].cpu().numpy())
-            # axs[0, 3].set_title('c_imag.png')
-            # axs[0, 3].axis('off')
             
-            # axs[1, 0].imshow(spec[0, 0, :, :].cpu().numpy())
-            # axs[1, 0].set_title('g_real.png')
-            # axs[1, 0].axis('off')
-            # axs[1, 1].imshow(spec[0, 1, :, :].cpu().numpy())
-            # axs[1, 1].set_title('g_imag.png')
-            # axs[1, 1].axis('off')
-            # axs[1, 2].imshow(batch_label[0, 0, :, :].cpu().numpy())
-            # axs[1, 2].set_title('l_real.png')
-            # axs[1, 2].axis('off')
-            # axs[1, 3].imshow(batch_label[0, 1, :, :].cpu().numpy())
-            # axs[1, 3].set_title('l_imag.png')
-            # axs[1, 3].axis('off')
-            # plt.savefig(f'asset/data/sample_{self.model_ddpm.__class__.__name__}.jpg', dpi=300, bbox_inches='tight')
-            # exit()
-
-            '''run code in above can draw the difference between initial gaussian, condition (noisy), generated, and ground truth'''
-
             batch_result = compare_complex(spec, batch_label,
-                                            batch['frame_num_list'],
-                                            feat_type=self.opt.feat_type)
+                                        batch['frame_num_list'],
+                                        feat_type=self.opt.feat_type,
+                                        is_save_wav=self.opt.save_wav and self.opt.inference,
+                                        result_path=f'./{self.opt.save_path}/wav',
+                                        wav_name_list=batch['wav_name_list'],
+                                        scaling_list=batch['scaling_list'])   
+
             csig_list.append(batch_result[0])
             cbak_list.append(batch_result[1])
             covl_list.append(batch_result[2])
@@ -447,28 +475,8 @@ class VBDDPMTrainer(BasicTrainer):
 
             self.progress.advance(batch_valid_ddpm, advance=1)
         
-        if self.opt.wandb:
-            wandb.log(
-                {
-                    'test_loss': np.mean(loss_list),
-                    'test_mean_csig': np.mean(csig_list),
-                    'test_mean_cbak': np.mean(cbak_list),
-                    'test_mean_covl': np.mean(covl_list),
-                    'test_mean_pesq': np.mean(pesq_list),
-                    'test_mean_ssnr': np.mean(ssnr_list),
-                    'test_mean_stoi': np.mean(stoi_list),
-                }
-            )
-        else:
-            print({
-                'test_loss': np.mean(loss_list),
-                'test_mean_csig': np.mean(csig_list),
-                'test_mean_cbak': np.mean(cbak_list),
-                'test_mean_covl': np.mean(covl_list),
-                'test_mean_pesq': np.mean(pesq_list),
-                'test_mean_ssnr': np.mean(ssnr_list),
-                'test_mean_stoi': np.mean(stoi_list),
-            })
+        ''' Save logs to wandb or terminal, and save result to txt file'''
+        self.print_save_logs(loss_list, csig_list, cbak_list, covl_list, pesq_list, ssnr_list, stoi_list)
             
         return np.mean(loss_list)
             
@@ -478,18 +486,27 @@ class RefinerTrainer(BasicTrainer):
 
         # c_gen
         self.c_gen = eval(opt.c_model)() #Base()
+        
         checkpoint = torch.load(opt.checkpoints['c_gen'])#"./asset/selected_model/c_gen.pth")
+        checkpoint['model_state_dict'] = unpack_DP_model(checkpoint['model_state_dict'])
         self.c_gen.load_state_dict(checkpoint['model_state_dict'])
+        
+        self.c_gen = nn.DataParallel(self.c_gen, device_ids=opt.gpus)        
         self.c_gen.to(opt.device)
         self.c_gen.eval()
 
         # ddpm
         self.ddpm_model = eval(opt.d_model)(opt.params) #DiffuSE(opt.params)
+        
         checkpoint = torch.load(opt.checkpoints['ddpm_model'])#f"./asset/selected_model/ddpm.pth")
+        checkpoint['model_state_dict'] = unpack_DP_model(checkpoint['model_state_dict'])
         self.ddpm_model.load_state_dict(checkpoint['model_state_dict'])
+        
+        self.ddpm_model = nn.DataParallel(self.ddpm_model, device_ids=opt.gpus)        
         self.ddpm_model.to(opt.device)
         self.ddpm_model.eval()
-
+        
+        # for inference
         self.params = opt.params
         beta = np.array(self.params.noise_schedule)  # noise_schedule --> beta
         noise_level = np.cumprod(1 - beta)  # noise_level --> alpha^bar
@@ -541,8 +558,7 @@ class RefinerTrainer(BasicTrainer):
                     c_t = noise_scale_sqrt * c + (1.0 - noise_scale) ** 0.5 * noise  # c_t
                     spec = 0.5 * spec + 0.5 * c_t
         spec = 0.5 * spec + 0.5 * batch_feat
-        # out = self.refiner(spec)
-        out = self.model(spec)
+        out = self.model(spec) # model = refiner
         loss = com_mag_mse_loss(out['est_comp'], batch_label, x['frame_num_list'])
         return {
             'model_out': out,

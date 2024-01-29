@@ -1,12 +1,13 @@
 import argparse
 
-argsparser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser()
 
-argsparser.add_argument('--gpus', type=int, nargs='+')
-argsparser.add_argument('--wpn', type=str)
-args = argsparser.parse_args()
+parser.add_argument('--gpus', type=int, default=[], nargs="+", help='set gpus')
+parser.add_argument('--wpn', type=str)
+parser.add_argument('--from_base', action='store_true', default=True, help='for refiner')
+args = parser.parse_args()
 # print(args.gpus, type(args.gpus))
 # print(args.wpn, type(args.wpn))
-if args.wpn:
-    print(args.wpn)
-    print("하이")
+print(args)
+# print(args.gpus)
+# print("하이")
