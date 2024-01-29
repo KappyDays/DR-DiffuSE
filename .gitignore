@@ -2,3 +2,5 @@ data
 wandb
 results
 asset
+.vscode
+toy.py
