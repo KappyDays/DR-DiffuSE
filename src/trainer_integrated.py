@@ -12,23 +12,25 @@ from tqdm import tqdm
 
 from parallel import DataParallelModel, DataParallelCriterion
 
-import pdb
+import pdb, time, datetime
 import warnings
 
 warnings.filterwarnings('ignore')
 
 class BasicTrainer:
-    def __init__(self, train_data, valid_data, model, logger, opt):
+    def __init__(self, train_data, valid_data, test_data, model, console, opt):
         # save model name for save pth
         self.model_name = model.__class__.__name__
-        valid_batch_size = 4
-                
+        val_batch_size = opt.val_batch_size if opt.val_batch_size else opt.batch_size
+        
         collate = CustomCollate(opt)
 
         self.train_loader = DataLoader(train_data, batch_size=opt.batch_size, shuffle=True, drop_last=True,
-                                        pin_memory=True, collate_fn=collate.collate_fn, num_workers=opt.num_workers)
-        self.valid_loader = DataLoader(valid_data, batch_size=valid_batch_size, shuffle=False, drop_last=True,
-                                        pin_memory=True, collate_fn=collate.collate_fn, num_workers=opt.num_workers)
+                                        pin_memory=True, collate_fn=collate.collate_fn, num_workers=opt.num_workers, prefetch_factor=2)
+        self.valid_loader = DataLoader(valid_data, batch_size=val_batch_size, shuffle=False, drop_last=True,
+                                        pin_memory=True, collate_fn=collate.collate_fn, num_workers=opt.num_workers, prefetch_factor=2)
+        self.test_loader = DataLoader(test_data, batch_size=val_batch_size, shuffle=False, drop_last=True,
+                                        pin_memory=True, collate_fn=collate.collate_fn, num_workers=opt.num_workers, prefetch_factor=2)
         self.model = model.to(opt.device)
 
         # optimizer
@@ -38,7 +40,7 @@ class BasicTrainer:
 
         # others
         self.opt = opt
-        self.logger = logger  # can be wandb, logging, or rich.console
+        self.console = console  # can be wandb, logging, or rich.console
         self.progress = None
     
     def data_compress(self, x):
@@ -117,85 +119,99 @@ class BasicTrainer:
         pass
 
     def train(self):
-        prev_cv_loss = float("inf")
-        best_cv_loss = float("inf")
+        # prev_cv_loss = float("inf")
+        best_cv_loss = 100 #float("inf")
         cv_no_impv = 0
         harving = False
 
-        with Progress() as self.progress:
-            for epoch in range(self.opt.step, self.opt.n_epoch):
-                batch_train = self.progress.add_task(f"[green]training epoch_{epoch}...", total=len(self.train_loader))
-                self.model.train()
-                for batch in self.train_loader:
-                    # cuda
-                    for key in batch.keys():
-                        try:
-                            batch[key] = batch[key].to(self.opt.device)
-                        except AttributeError:
-                            continue
-                    out = self.run_step(batch)
-                    self.optim.zero_grad()
-                    out['loss'].backward()
-                    self.optim.step()
-                    self.progress.advance(batch_train, advance=1)
-                    if self.opt.wandb:
-                        wandb.log({'train_loss': out['loss'].item()})
-
-                mean_valid_loss = self.inference()
-
-                '''Adjust the learning rate and early stop'''
-                if self.opt.half_lr > 1:
-                    if mean_valid_loss >= best_cv_loss: # change [prev_cv_loss => best_cv_loss]
-                        cv_no_impv += 1
-                        if cv_no_impv == self.opt.half_lr:
-                            harving = True
-                        if cv_no_impv >= self.opt.early_stop > 0:
-                            self.logger.print("No improvement and apply early stop")
-                            return
-                    else:
-                        cv_no_impv = 0
-
-                if harving == True:
-                    optim_state = self.optim.state_dict()
-                    for i in range(len(optim_state['param_groups'])):
-                        optim_state['param_groups'][i]['lr'] = optim_state['param_groups'][i]['lr'] / 2.0
-                    self.optim.load_state_dict(optim_state)
-                    self.logger.print('Learning rate adjusted to %5f' % (optim_state['param_groups'][0]['lr']))
-                    harving = False
-                # prev_cv_loss = mean_valid_loss
-
-                if mean_valid_loss < best_cv_loss:
-                    self.logger.print(
-                        f"best loss is: {best_cv_loss}, current loss is: {mean_valid_loss}, save best_checkpoint.pth")
-                    best_cv_loss = mean_valid_loss
-
-                    '''save best checkpoint'''
-                    self.save_cpt(epoch,
-                                save_path=f'./{self.opt.save_path}/'
-                                            f'{self.model_name}_best_{epoch}_{round(best_cv_loss, 4)}.pth')
-                self.save_cpt(epoch,
-                            save_path=f'./{self.opt.save_path}/'
-                                        f'{self.model_name}_{epoch}.pth')
+        # with Progress() as self.progress:
+        for epoch in tqdm(range(self.opt.step, self.opt.n_epoch), desc='Epoch', position=0, ncols=100):
+            start = time.time()
+            # batch_train = self.progress.add_task(f"[green]training epoch_{epoch}...", total=len(self.train_loader))
+            self.model.train()
+            for batch in tqdm(self.train_loader, desc="Training", leave=False, position=1, ncols=100):
+                ## cuda
+                for key in batch.keys():
+                    try:
+                        batch[key] = batch[key].to(self.opt.device)
+                    except AttributeError:
+                        continue
+                out = self.run_step(batch)
+                self.optim.zero_grad()
+                out['loss'].backward()
+                self.optim.step()
+                # self.progress.advance(batch_train, advance=1)
                 if self.opt.wandb:
-                    wandb.save(f'./{self.opt.save_path}/'
-                            f'{self.model_name}_best_{epoch}_{round(best_cv_loss, 4)}.pth')
+                    wandb.log({'train_loss': out['loss'].item()})
+
+            mean_valid_loss = self.inference(self.valid_loader)
+
+            '''Adjust the learning rate and early stop'''
+            if self.opt.half_lr > 1:
+                if mean_valid_loss >= best_cv_loss: # change [prev_cv_loss => best_cv_loss]
+                    cv_no_impv += 1
+                    if cv_no_impv == self.opt.half_lr:
+                        harving = True
+                    if cv_no_impv >= self.opt.early_stop > 0:
+                        self.console.print("No improvement and apply early stop")
+                        break #return
+                else:
+                    cv_no_impv = 0
+
+            if harving == True:
+                optim_state = self.optim.state_dict()
+                for i in range(len(optim_state['param_groups'])):
+                    optim_state['param_groups'][i]['lr'] = optim_state['param_groups'][i]['lr'] / 2.0
+                self.optim.load_state_dict(optim_state)
+                self.console.print('Learning rate adjusted to %5f' % (optim_state['param_groups'][0]['lr']))
+                harving = False
+            # prev_cv_loss = mean_valid_loss
+
+            if mean_valid_loss < best_cv_loss:
+                self.console.print(
+                    f"best loss is: {best_cv_loss}, current loss is: {mean_valid_loss}, save best_checkpoint.pth")
+                best_cv_loss = mean_valid_loss
+
+                '''save best checkpoint'''
+                best_save_path = f'{self.opt.save_path}/'\
+                                f'{self.model_name}_best_{epoch}_{round(best_cv_loss, 4)}.pth'
+                self.save_cpt(epoch, save_path=best_save_path)
+            ## save checkpoint per epoch         
+            self.console.print(f'Save ckpt at epoch: {epoch}, mean_val_loss: {mean_valid_loss}')
+            self.save_cpt(epoch,
+                        save_path=f'{self.opt.save_path}/'
+                                    f'{self.model_name}_{epoch}.pth')
+            if self.opt.wandb:
+                wandb.save(f'{self.opt.save_path}/'
+                        f'{self.model_name}_best_{epoch}_{round(best_cv_loss, 4)}.pth')
+                
+            end = time.time()
+            self.console.print(f'\nEpoch [{epoch}] time consuming... {datetime.timedelta(seconds=end-start)}')
+            
+        self.console.print(f">>> Training Finish... best loss is: {best_cv_loss}")
+        
+        '''inference with best model and test data'''
+        self.console.print(f"\n>>> Inference Start with best model: {best_save_path}")
+        self.opt.inference = True
+        best_ckpt = torch.load(best_save_path)
+        self.model.load_state_dict(best_ckpt['model_state_dict'])
+        mean_test_loss = self.inference(self.test_loader)
+        self.console.print(f"\n>>> Inference Finish... best loss is: {best_cv_loss}, test loss is: {mean_test_loss}")
 
     @torch.no_grad()
-    def inference(self):
+    def inference(self, data_loader):
         self.model.eval()
-        if self.progress:
-            loss = self.inference_()
-        else:
-            with Progress() as self.progress:
-                loss = self.inference_()
+        loss = self.inference_(data_loader)
+        
         return loss
     
     @torch.no_grad()
-    def inference_(self):
+    def inference_(self, data_loader):
         loss_list = []
         csig_list, cbak_list, covl_list, pesq_list, ssnr_list, stoi_list = [], [], [], [], [], []
-        batch_valid = self.progress.add_task(f"[green]validating...", total=len(self.valid_loader))
-        for batch in self.valid_loader:
+        # batch_valid = self.progress.add_task(f"[green]validating...", total=len(self.valid_loader))
+        desc = "Validating" if data_loader == self.valid_loader else "Testing"
+        for batch in tqdm(data_loader, desc=desc, leave=False, position=1, ncols=100):
             # cuda
             for key in batch.keys():
                 try:
@@ -219,11 +235,9 @@ class BasicTrainer:
             ssnr_list.append(batch_result[4])
             stoi_list.append(batch_result[5])
             
-            self.progress.advance(batch_valid, advance=1)
-
         self.print_save_logs(loss_list, csig_list, cbak_list, covl_list, pesq_list, ssnr_list, stoi_list)
-
-        return np.mean(loss_list)    
+        
+        return np.mean(loss_list)
     
     def save_cpt(self, step, save_path):
         """
@@ -244,35 +258,35 @@ class BasicTrainer:
         if self.opt.wandb:
             wandb.log(
                 {
-                    'test_loss': np.mean(loss_list),
-                    'test_mean_csig': np.mean(csig_list),
-                    'test_mean_cbak': np.mean(cbak_list),
-                    'test_mean_covl': np.mean(covl_list),
-                    'test_mean_pesq': np.mean(pesq_list),
-                    'test_mean_ssnr': np.mean(ssnr_list),
-                    'test_mean_stoi': np.mean(stoi_list)
+                    'val_loss': np.mean(loss_list),
+                    'val_mean_csig': np.mean(csig_list),
+                    'val_mean_cbak': np.mean(cbak_list),
+                    'val_mean_covl': np.mean(covl_list),
+                    'val_mean_pesq': np.mean(pesq_list),
+                    'val_mean_ssnr': np.mean(ssnr_list),
+                    'val_mean_stoi': np.mean(stoi_list)
                 }
             )
         else:
-            print({
-                    'test_loss': np.mean(loss_list),
-                    'test_mean_csig': np.mean(csig_list),
-                    'test_mean_cbak': np.mean(cbak_list),
-                    'test_mean_covl': np.mean(covl_list),
-                    'test_mean_pesq': np.mean(pesq_list),
-                    'test_mean_ssnr': np.mean(ssnr_list),
-                    'test_mean_stoi': np.mean(stoi_list)
-            })
-            if self.opt.inference: # save result for inference
-                with open(f'./{self.opt.save_path}/inference_result.txt', 'w') as fp:
-                    fp.write(f'{self.model_name}: {self.opt.resume_from_ckpt}\n\
-                            test_mean_stoi: {round(np.mean(stoi_list), 4)}\n\
-                            test_mean_pesq: {round(np.mean(pesq_list), 4)}\n\
-                            test_mean_csig: {round(np.mean(csig_list), 4)}\n\
-                            test_mean_cbak: {round(np.mean(cbak_list), 4)}\n\
-                            test_mean_covl: {round(np.mean(covl_list), 4)}\n\
-                            test_mean_ssnr: {round(np.mean(ssnr_list), 4)}\n\
-                            test_loss:      {round(np.mean(loss_list), 4)}')        
+            print('\n'+{'val_loss': np.mean(loss_list),
+                  'val_mean_csig': np.mean(csig_list),
+                  'val_mean_cbak': np.mean(cbak_list),
+                  'val_mean_covl': np.mean(covl_list),
+                  'val_mean_pesq': np.mean(pesq_list),
+                  'val_mean_ssnr': np.mean(ssnr_list),
+                  'val_mean_stoi': np.mean(stoi_list)}
+            )
+        if self.opt.inference: # save result for inference
+            matched_training = 'mismatched' if self.opt.mismatched else 'matched'
+            with open(f'{self.opt.save_path}/inference_result_{matched_training}.txt', 'w') as fp:
+                fp.write(f'[from ckpt] {self.model_name}: {self.opt.resume_from_ckpt}\n\
+                        test_mean_stoi: {round(np.mean(stoi_list), 4)}\n\
+                        test_mean_pesq: {round(np.mean(pesq_list), 4)}\n\
+                        test_mean_csig: {round(np.mean(csig_list), 4)}\n\
+                        test_mean_cbak: {round(np.mean(cbak_list), 4)}\n\
+                        test_mean_covl: {round(np.mean(covl_list), 4)}\n\
+                        test_mean_ssnr: {round(np.mean(ssnr_list), 4)}\n\
+                        test_loss:      {round(np.mean(loss_list), 4)}')        
     
     def drow_result(self, temp, condition, spec, batch_label):
         pass
@@ -307,8 +321,8 @@ class BasicTrainer:
         # exit()
             
 class VBTrainer(BasicTrainer):
-    def __init__(self, train_data, valid_data, model, logger, opt):
-        super(VBTrainer, self).__init__(train_data, valid_data, model, logger, opt)
+    def __init__(self, train_data, valid_data, test_data, model, logger, opt):
+        super(VBTrainer, self).__init__(train_data, valid_data, test_data, model, logger, opt)
     def run_step(self, x):
         batch_feat, batch_label = self.data_compress(x)
         out = self.model(batch_feat)
@@ -323,8 +337,9 @@ class VBTrainer(BasicTrainer):
         }
 
 class VBDDPMTrainer(BasicTrainer):
-    def __init__(self, train_data, valid_data, model, logger, opt):
-        super(VBDDPMTrainer, self).__init__(train_data, valid_data, model, logger, opt)
+    def __init__(self, train_data, valid_data, test_data, model, console, opt, loss_type='mse'):
+        super(VBDDPMTrainer, self).__init__(train_data, valid_data, test_data, model, console, opt)
+        self.loss_type = loss_type
         
         self.params = opt.params
         beta = np.array(self.params.noise_schedule)  # noise_schedule --> beta
@@ -332,12 +347,13 @@ class VBDDPMTrainer(BasicTrainer):
         self.noise_level = torch.tensor(noise_level.astype(np.float32)).to(self.opt.device)
         
         # load conditon generator
-        if opt.c_model: ### check no DP training
+        if opt.c_model:
             self.c_gen = eval(opt.c_model)() # Base or BaseTNN
             
             checkpoint = torch.load(opt.checkpoints['c_gen'])#"./asset/base_model/Base_best.pth")
             checkpoint['model_state_dict'] = unpack_DP_model(checkpoint['model_state_dict'])
             self.c_gen.load_state_dict(checkpoint['model_state_dict'])
+            console.print(f'>>> Successfully load [c_gen] model checkpoints')
             
             self.c_gen = nn.DataParallel(self.c_gen, device_ids=opt.gpus)
             self.c_gen.to(opt.device)
@@ -349,11 +365,12 @@ class VBDDPMTrainer(BasicTrainer):
             checkpoint = torch.load(opt.checkpoints['refiner'])#"./asset/selected_model/refiner.pth")
             checkpoint['model_state_dict'] = unpack_DP_model(checkpoint['model_state_dict'])
             self.refiner.load_state_dict(checkpoint['model_state_dict'])
+            console.print(f'>>> Successfully load [refiner] model checkpoints')
             
             self.refiner = nn.DataParallel(self.refiner, device_ids=opt.gpus)
             self.refiner.to(opt.device)
             self.refiner.eval()
-        
+            
     def run_step(self, x):
         batch_feat, batch_label = self.data_compress(x)
 
@@ -372,7 +389,11 @@ class VBDDPMTrainer(BasicTrainer):
 
         out = self.model(noisy_audio, condition, t)
         
-        loss = com_mse_loss(out['est_noise'], noise, x['frame_num_list'])
+        if self.loss_type == 'mse':
+            loss = com_mse_loss(out['est_noise'], noise, x['frame_num_list'])
+        elif self.loss_type == 'mag_mse':
+            loss = com_mse_loss(out, noise, x['frame_num_list'])
+            # loss = com_mag_mse_loss(out, noise, x['frame_num_list'])
             
         return {
             'model_out': out,
@@ -387,8 +408,8 @@ class VBDDPMTrainer(BasicTrainer):
         loss_list, csig_list, cbak_list, covl_list, pesq_list, ssnr_list, stoi_list = [], [], [], [], [], [], []
         alpha, beta, alpha_cum, sigmas, T = self.inference_schedule(fast_sampling=self.params.fast_sampling)
         
-        batch_valid_ddpm = self.progress.add_task(f"[green]validating...", total=len(self.valid_loader))
-        for batch in self.valid_loader:
+        # batch_valid_ddpm = self.progress.add_task(f"[green]validating...", total=len(self.valid_loader))
+        for batch in tqdm(self.valid_loader, desc="Validating", leave=False, position=1):
             # cuda
             for key in batch.keys():
                 try:
@@ -396,7 +417,7 @@ class VBDDPMTrainer(BasicTrainer):
                 except AttributeError:
                     continue
                 
-            ''' For training, compute test loss'''
+            ''' For training, compute test loss, This takes a lot of time(can be disabled)'''
             if self.opt.inference == False:
                 out = self.run_step(batch)
                 loss_list.append(out['loss'].item())
@@ -429,14 +450,16 @@ class VBDDPMTrainer(BasicTrainer):
 
             temp = spec  # for draw
             N = batch_label.shape[0]  # batch size
-            for n in tqdm(range(len(alpha) - 1, -1, -1), leave=True):
+            for n in tqdm(range(len(alpha) - 1, -1, -1), desc="Denoising", leave=False, position=2):#, leave=True):
 
                 t = torch.tensor([T[n]], device=spec.device).repeat(N)
                 out = self.model(spec, condition, t)
 
                 c1 = 1 / alpha[n] ** 0.5  # for ddpm sampling
                 c2 = beta[n] / (1 - alpha_cum[n]) ** 0.5  # for ddpm sampling
-                spec = c1 * (spec - c2 * out['est_noise'])
+                if self.loss_type == 'mse':
+                    out = out['est_noise']
+                spec = c1 * (spec - c2 * out)
                 if n > 0:  # + random noise
                     noise = torch.randn_like(spec)
                     spec += sigmas[n] * noise
@@ -473,7 +496,7 @@ class VBDDPMTrainer(BasicTrainer):
             ssnr_list.append(batch_result[4])
             stoi_list.append(batch_result[5])
 
-            self.progress.advance(batch_valid_ddpm, advance=1)
+            # self.progress.advance(batch_valid_ddpm, advance=1)
         
         ''' Save logs to wandb or terminal, and save result to txt file'''
         self.print_save_logs(loss_list, csig_list, cbak_list, covl_list, pesq_list, ssnr_list, stoi_list)
@@ -481,8 +504,8 @@ class VBDDPMTrainer(BasicTrainer):
         return np.mean(loss_list)
             
 class RefinerTrainer(BasicTrainer):
-    def __init__(self, train_data, valid_data, model, console, opt):
-        super(RefinerTrainer, self).__init__(train_data, valid_data, model, console, opt)
+    def __init__(self, train_data, valid_data, test_data, model, console, opt):
+        super(RefinerTrainer, self).__init__(train_data, valid_data, test_data, model, console, opt)
 
         # c_gen
         self.c_gen = eval(opt.c_model)() #Base()
@@ -490,6 +513,7 @@ class RefinerTrainer(BasicTrainer):
         checkpoint = torch.load(opt.checkpoints['c_gen'])#"./asset/selected_model/c_gen.pth")
         checkpoint['model_state_dict'] = unpack_DP_model(checkpoint['model_state_dict'])
         self.c_gen.load_state_dict(checkpoint['model_state_dict'])
+        console.print(f'>>> Successfully load [c_gen] model checkpoints')
         
         self.c_gen = nn.DataParallel(self.c_gen, device_ids=opt.gpus)        
         self.c_gen.to(opt.device)
@@ -501,6 +525,7 @@ class RefinerTrainer(BasicTrainer):
         checkpoint = torch.load(opt.checkpoints['ddpm_model'])#f"./asset/selected_model/ddpm.pth")
         checkpoint['model_state_dict'] = unpack_DP_model(checkpoint['model_state_dict'])
         self.ddpm_model.load_state_dict(checkpoint['model_state_dict'])
+        console.print(f'>>> Successfully load [ddpm_model] checkpoints')
         
         self.ddpm_model = nn.DataParallel(self.ddpm_model, device_ids=opt.gpus)        
         self.ddpm_model.to(opt.device)

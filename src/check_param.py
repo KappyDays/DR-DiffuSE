@@ -12,6 +12,12 @@ def run_model(my_model):
     # out = model(x)
     # print('{} -> {}'.format(x.shape, out['est_comp'].shape))
 
+def numParams(net):
+    num = 0
+    for param in net.parameters():
+        if param.requires_grad:
+            num += int(np.prod(param.size()))
+    return num
 
 if __name__ == '__main__':
     file = sys.argv[0]

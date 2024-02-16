@@ -2,14 +2,14 @@ import torch
 import torch.nn as nn
 import os
 import numpy as np
-from model import Base
+from model import BaseTNN
 
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
-
-class DiffuSE(nn.Module):
+'''Diffuse + Use BaseTNN for condition delivery'''
+class DiffuSE_BaseTNN(nn.Module):
     def __init__(self, params):
-        super(DiffuSE, self).__init__()
+        super(DiffuSE_BaseTNN, self).__init__()
         self.params = params
         self.preprocess = Preprocess()
         self.time_embedding = TimeEmbedding(len(params.noise_schedule))
@@ -22,7 +22,7 @@ class DiffuSE(nn.Module):
                                   TCM())
         
         # auxiliar condition delivery
-        self.c_deliver = Base()
+        self.c_deliver = BaseTNN() # Base -> BaseTNN
 
     def forward(self, x, c, t):
         # generate fine-grained condition signals
@@ -387,7 +387,7 @@ def run_model():
         noise_schedule=np.linspace(1e-4, 0.05, 200).tolist(),
         inference_noise_schedule=[0.0001, 0.001, 0.01, 0.05, 0.2, 0.35],
     )
-    model = DiffuSE(params)
+    model = DiffuSE_BaseTNN(params)
     param_count = sum([param.nelement() for param in model.parameters()])
     print("Number of parameters: %.2fM" % (param_count / 1e6))
     x = torch.randn((8, 2, 301, 161), dtype=torch.float32)

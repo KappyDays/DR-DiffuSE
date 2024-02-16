@@ -6,7 +6,8 @@ import random
 import torch
 import numpy as np
 import librosa
-
+import torchaudio
+import pdb
 
 class ToTensor(object):
     def __call__(self, x, tensor_type='float'):
@@ -29,6 +30,7 @@ class CustomCollate(object):
         self.win_size = opt.win_size
         self.fft_num = opt.fft_num
         self.win_shift = opt.win_shift
+        # self.device = opt.device
 
     @staticmethod
     def normalize(x):
@@ -45,6 +47,7 @@ class CustomCollate(object):
         noisy_list, clean_list, frame_num_list, wav_len_list, wav_name_list, scaling_list = [], [], [], [], [], []
         to_tensor = ToTensor()
         for sample in batch:
+            pdb.set_trace()
             c = np.sqrt(len(sample['noisy_speech']) / np.sum(sample['noisy_speech'] ** 2.0))
             scaling_list.append(c)
             noisy_list.append(to_tensor(sample['noisy_speech'] * c))
@@ -92,16 +95,26 @@ class VBDataset(Dataset):
         self.win_shift = opt.win_shift
         self.raw_paths = [x.split('/')[-1] for x in glob.glob(noisy_root + '/*.wav')]
 
-        assert data_type in ['train', 'valid']
+        assert data_type in ['train', 'valid', 'test']
         self.data_type = data_type  # determine train or test
+        
+        ori_sr = 16000 if opt.mismatched else 48000
+        self.resample = torchaudio.transforms.Resample(ori_sr, 16000)
 
     def __len__(self):
         return len(self.raw_paths)
 
     def __getitem__(self, index):
         wav_name = self.raw_paths[index]
-        noisy, _ = librosa.load(os.path.join(self.noisy_root, self.raw_paths[index]), sr=16000)
-        clean, _ = librosa.load(os.path.join(self.clean_root, self.raw_paths[index]), sr=16000)
+        pdb.set_trace()
+        noisy, n_sr = torchaudio.load(os.path.join(self.noisy_root, self.raw_paths[index]))
+        noisy = self.resample(noisy)
+        # noisy2 = torchaudio.transforms.Resample(noisy, n_sr, 16000)
+        clean, c_sr = torchaudio.load(os.path.join(self.clean_root, self.raw_paths[index]))
+        clean = self.resample(clean)
+        # clean2 = torchaudio.transforms.Resample(clean, c_sr, 16000)
+        noisy2, _ = librosa.load(os.path.join(self.noisy_root, self.raw_paths[index]), sr=16000)
+        clean2, _ = librosa.load(os.path.join(self.clean_root, self.raw_paths[index]), sr=16000)
         if self.data_type == 'train':
             if len(noisy) > self.chunk_length:
                 wav_start = random.randint(0, len(noisy) - self.chunk_length)

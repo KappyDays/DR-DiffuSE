@@ -5,11 +5,15 @@ import numpy as np
 import argparse
 
 import torch
+from torch.nn import Parameter
 
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import BatchSampler
 from torch.nn.parallel import DistributedDataParallel
+
+from torch.nn import init
+import math
 
 def get_logger(filename, verbosity=1, name=None):
     level_dict = {0: logging.DEBUG, 1: logging.INFO, 2: logging.WARNING}
@@ -70,6 +74,19 @@ def unpack_DP_model(state_dict):
         else:
             unpacked_state_dict[key] = state_dict[key]#.to(opt.device)
     return unpacked_state_dict
+
+def make_cnn_parameter(in_ch, out_ch, groups, kernel_size):
+    w, h = kernel_size
+    weight = Parameter(torch.Tensor(out_ch, in_ch // groups, w, h))
+    bias = Parameter(torch.Tensor(out_ch))
+    
+    init.kaiming_uniform_(weight, a=math.sqrt(5))
+    if bias is not None:
+        fan_in, _ = init._calculate_fan_in_and_fan_out(weight)
+        bound = 1 / math.sqrt(fan_in)
+        init.uniform_(bias, -bound, bound)
+        
+    return weight, bias
             
 def init_distributed_training(rank, opts):
     # 1. setting for distributed training
