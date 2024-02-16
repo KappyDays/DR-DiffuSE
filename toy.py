@@ -12,6 +12,7 @@ import torchaudio
 import pdb
 import time, datetime
 import warnings
+import sys
 
 warnings.filterwarnings('ignore')
 
@@ -141,6 +142,8 @@ class VBDataset(Dataset):
             'wav_len': wav_len,
             'wav_name': wav_name
         }
+        
+sys.argv[1]        
 tr_data = VBDataset(
     f'./data/voicebank/noisy_trainset_remove_val_wav',
     f'./data/voicebank/clean_trainset_remove_val_wav',
