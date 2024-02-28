@@ -54,10 +54,13 @@ class CustomCollate(object):
         noisy_list, clean_list, frame_num_list, wav_len_list, wav_name_list, scaling_list = [], [], [], [], [], []
         to_tensor = ToTensor()
         for sample in batch:
+            # c = np.sqrt(len(sample['noisy_speech']) / np.sum(sample['noisy_speech'] ** 2.0))
             c = torch.sqrt(len(sample['noisy_speech']) / torch.sum(sample['noisy_speech'] ** 2.0))
             scaling_list.append(c)
-            noisy_list.append(to_tensor(sample['noisy_speech'] * c))
-            clean_list.append(to_tensor(sample['clean_speech'] * c))
+            noisy_list.append(sample['noisy_speech'] * c)
+            # noisy_list.append(to_tensor(sample['noisy_speech'] * c))
+            clean_list.append(sample['clean_speech'] * c)
+            # clean_list.append(to_tensor(sample['clean_speech'] * c))
             frame_num_list.append(sample['frame_num'])
             wav_len_list.append(sample['wav_len'])
             wav_name_list.append(sample['wav_name'])
@@ -119,12 +122,10 @@ class VBDataset(Dataset):
         # pdb.set_trace()
         noisy, _ = torchaudio.load(os.path.join(self.noisy_root, self.raw_paths[index]))
         noisy = self.resample(noisy).squeeze()
-        # noisy2 = torchaudio.transforms.Resample(noisy, n_sr, 16000)
         clean, _ = torchaudio.load(os.path.join(self.clean_root, self.raw_paths[index]))
         clean = self.resample(clean).squeeze()
-        # clean2 = torchaudio.transforms.Resample(clean, c_sr, 16000)
-        # noisy2, _ = librosa.load(os.path.join(self.noisy_root, self.raw_paths[index]), sr=16000)
-        # clean2, _ = librosa.load(os.path.join(self.clean_root, self.raw_paths[index]), sr=16000)
+        # noisy, _ = librosa.load(os.path.join(self.noisy_root, self.raw_paths[index]), sr=16000)
+        # clean, _ = librosa.load(os.path.join(self.clean_root, self.raw_paths[index]), sr=16000)
         if self.data_type == 'train':
             if len(noisy) > self.chunk_length:
                 wav_start = random.randint(0, len(noisy) - self.chunk_length)
@@ -143,7 +144,7 @@ class VBDataset(Dataset):
             'wav_name': wav_name
         }
         
-sys.argv[1]        
+# sys.argv[1]        
 tr_data = VBDataset(
     f'./data/voicebank/noisy_trainset_remove_val_wav',
     f'./data/voicebank/clean_trainset_remove_val_wav',
@@ -155,7 +156,7 @@ tr_data = VBDataset(
 #     'train')
 
 train_loader = DataLoader(tr_data, batch_size=64, shuffle=True, drop_last=True,
-                                pin_memory=True, collate_fn=CustomCollate().collate_fn, num_workers=0)#, prefetch_factor=2)        
+                                pin_memory=True, collate_fn=CustomCollate().collate_fn, num_workers=0)
 
 
 
